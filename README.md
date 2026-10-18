@@ -11,6 +11,45 @@ The project began with analytical modeling of a **uniform linear array (ULA)** a
 
 The work focuses on concepts applicable to **radar systems, satellite communications, and wireless communications**.
 
+
+## Project Visuals
+
+### Broadside Array Factor
+
+<p align="center">
+  <img src="Images/Broadside.png"
+       alt="Broadside array factor for a uniform linear array"
+       width="700">
+</p>
+
+**Figure 1.** Normalized array factor at broadside, illustrating
+main-beam width and sidelobe behavior.
+
+### Electronic Beam Steering
+
+<p align="center">
+  <img src="Images/Beamsteering.png"
+       alt="Phased array electronically steered to 30 degrees"
+       width="700">
+</p>
+
+**Figure 2.** Electronic beam steering to 30 degrees using
+a progressive phase shift between antenna elements.
+
+### Grating-Lobe Analysis
+
+<p align="center">
+  <img src="Images/Grating_Lobes.png"
+       alt="Array factor showing grating-lobe formation"
+       width="700">
+</p>
+
+**Figure 3.** Effects of increasing element spacing on
+array-factor response and grating-lobe formation.
+
+---
+
+
 ## Project Objectives
 
 - Model uniform linear antenna arrays using analytical array-factor equations.
