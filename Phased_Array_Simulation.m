@@ -1,163 +1,320 @@
 % Phased Array Antenna Simulation (Uniform Linear Array)
 % -----------------------------------------------------
-% This script simulates the radiation pattern of a uniform linear
-% phased array antenna using the analytical array factor formulation.
-%
 % Features:
-%   - Electronic beam steering
-%   - HPBW, FNBW, and Sidelobe Level computation
-%   - Optional normalization and dB plotting
-%   - Annotated radiation pattern visualization
-%   - Export of performance metrics for analysis
+%   - Array factor plotting
+%   - Beamwidth + SLL metrics
+%   - Target tracking simulation
+%   - RMS tracking error
+%   - Multi-curve RMS vs HPBW (noise + lag sweeps)
+%   - Optional spacing sweep (grating lobes insight)
 %
 % Author: Josiah Germain
 
-
 % Housekeeping
-% --------------------------
 close all; clear; clc;
 
+% ==========================
+% USER SETTINGS
+% ==========================
+runTracking = true;
+useNormalization = true;
+useDecibelPlot  = false;
 
-% User Plot Options
-% --------------------------
-useNormalization = true;    % true = normalize AF for plotting
-useDecibelPlot  = true;    % true = plot in dB (requires normalization)
+% Array parameters
+lambda = 0.3;
+K = 2*pi/lambda;
+d = lambda/2;
+N = 16;
 
+% ==========================
+% TRACKING MODE
+% ==========================
+if runTracking
 
-% Defining Parameters
-% --------------------------
-lambda = 0.3;                  % Wavelength [m]
-K = 2*pi/lambda;               % Wavenumber
-d = lambda/2;                  % Element spacing
-N = 16;                         % Number of elements
+    % Time + motion
+    t_total = 5;
+    dt = 0.01;
+    t = 0:dt:t_total;
+    theta_target = 20 * sin(2*pi*0.5*t);
 
+    % Imperfections (baseline case)
+    lag_steps = 5;
+    noise_std = 1.0;
 
-% Beam Steering
-% --------------------------
-theta_degrees = 0;                    % Steering angle [deg]
-theta_0 = deg2rad(theta_degrees);      % Convert to radians
-B = -K*d*sin(theta_0);
+    % Reference beam
+    theta_0 = 0;
+    B = -K*d*sin(theta_0);
 
+    % Get metrics
+    [~, ~, HPBW, ~, SLL_dB, ~, ~] = ...
+        computeArrayFactor(K, d, N, B, lambda, true);
 
-% Angular Sweep
-% --------------------------
-theta_max = pi/2;
-numPoints = 1000;
-theta = linspace(-theta_max, theta_max, numPoints);
+    SLL_linear = 10^(SLL_dB/20);
 
+    % Run tracking
+    [theta_steered, tracking_error, RMS_error] = ...
+        runTrackingSimulation(theta_target, HPBW, SLL_linear, lag_steps, noise_std);
 
-% Array Factor Calculation
-% --------------------------
-ArrayFactor = zeros(size(theta));
+    % ==========================
+    % PLOTS
+    % ==========================
+    figure;
 
-for n = 0:N-1
-    ArrayFactor = ArrayFactor + exp(1i * n * (K*d*sin(theta) + B));
+    subplot(2,1,1)
+    plot(t, theta_target, 'LineWidth', 1.5); hold on;
+    plot(t, theta_steered, '--', 'LineWidth', 1.5);
+    xlabel('Time (s)');
+    ylabel('Angle (deg)');
+    title('Target Tracking');
+    legend('Target','Steered Beam');
+    grid on;
+
+    text(0.02,0.95,{
+        sprintf('N = %d', N)
+        sprintf('d = %.2f \\lambda', d/lambda)
+        sprintf('HPBW = %.2f°', HPBW)
+        sprintf('Lag = %d', lag_steps)
+        sprintf('Noise = %.2f°', noise_std)
+    },'Units','normalized','VerticalAlignment','top',...
+      'BackgroundColor','w','EdgeColor','k');
+
+    subplot(2,1,2)
+    plot(t, tracking_error, 'LineWidth', 1.5);
+    xlabel('Time (s)');
+    ylabel('Normalized Error');
+    title('Tracking Error');
+    grid on;
+
+    text(0.02,0.95,{
+        sprintf('RMS = %.4f', RMS_error)
+        sprintf('HPBW = %.2f°', HPBW)
+        sprintf('SLL = %.2f dB', SLL_dB)
+    },'Units','normalized','VerticalAlignment','top',...
+      'BackgroundColor','w','EdgeColor','k');
+
+    % ==========================
+    % NOISE SWEEP
+    % ==========================
+    N_values = 4:2:32;
+    noise_levels = [0.2 0.5 1.0 2.0];
+
+    HPBW_values = zeros(size(N_values));
+    RMS_matrix = zeros(length(noise_levels), length(N_values));
+
+    for n_idx = 1:length(noise_levels)
+
+        noise_std = noise_levels(n_idx);
+
+        for i = 1:length(N_values)
+
+            N_temp = N_values(i);
+
+            [~, ~, HPBW, ~, SLL_dB, ~, ~] = ...
+                computeArrayFactor(K, d, N_temp, B, lambda, true);
+
+            SLL_linear = 10^(SLL_dB/20);
+
+            [~, ~, RMS_error] = ...
+                runTrackingSimulation(theta_target, HPBW, SLL_linear, lag_steps, noise_std);
+
+            HPBW_values(i) = HPBW;
+            RMS_matrix(n_idx,i) = RMS_error;
+        end
+    end
+
+    [HPBW_values, idx] = sort(HPBW_values);
+    RMS_matrix = RMS_matrix(:, idx);
+
+    figure; hold on; grid on;
+    for i = 1:length(noise_levels)
+        plot(HPBW_values, RMS_matrix(i,:), 'o-', 'LineWidth', 1.5);
+    end
+
+    xlabel('HPBW (deg)');
+    ylabel('RMS Error');
+    title('RMS Error vs Beamwidth (Noise Sweep)');
+    legend(arrayfun(@(x) sprintf('\\sigma=%.1f°',x), noise_levels,'UniformOutput',false));
+
+    % ==========================
+    % LAG SWEEP
+    % ==========================
+    lag_values = [0 2 5 10];
+    RMS_lag = zeros(length(lag_values), length(N_values));
+
+    for l_idx = 1:length(lag_values)
+
+        lag_steps = lag_values(l_idx);
+
+        for i = 1:length(N_values)
+
+            N_temp = N_values(i);
+
+            [~, ~, HPBW, ~, SLL_dB, ~, ~] = ...
+                computeArrayFactor(K, d, N_temp, B, lambda, true);
+
+            SLL_linear = 10^(SLL_dB/20);
+
+            [~, ~, RMS_error] = ...
+                runTrackingSimulation(theta_target, HPBW, SLL_linear, lag_steps, noise_std);
+
+            RMS_lag(l_idx,i) = RMS_error;
+        end
+    end
+
+    figure; hold on; grid on;
+    for i = 1:length(lag_values)
+        plot(HPBW_values, RMS_lag(i,:), 'o-', 'LineWidth', 1.5);
+    end
+
+    xlabel('HPBW (deg)');
+    ylabel('RMS Error');
+    title('RMS Error vs Beamwidth (Lag Sweep)');
+    legend(arrayfun(@(x) sprintf('Lag=%d',x), lag_values,'UniformOutput',false));
+
+    % ==========================
+    % ELEMENT SPACING SWEEP
+    % ==========================
+    d_values = [lambda/2, 0.75*lambda];
+    RMS_spacing = zeros(length(d_values), length(N_values));
+
+    for d_idx = 1:length(d_values)
+
+        d_temp = d_values(d_idx);
+
+        for i = 1:length(N_values)
+
+            N_temp = N_values(i);
+
+            [~, ~, HPBW, ~, SLL_dB, ~, ~] = ...
+                computeArrayFactor(K, d_temp, N_temp, B, lambda, true);
+
+            SLL_linear = 10^(SLL_dB/20);
+
+            [~, ~, RMS_error] = ...
+                runTrackingSimulation(theta_target, HPBW, SLL_linear, lag_steps, noise_std);
+
+            RMS_spacing(d_idx,i) = RMS_error;
+        end
+    end
+
+    figure; hold on; grid on;
+    for i = 1:length(d_values)
+        plot(HPBW_values, RMS_spacing(i,:), 'o-', 'LineWidth', 1.5);
+    end
+
+    xlabel('HPBW (deg)');
+    ylabel('RMS Error');
+    title('RMS Error vs Beamwidth (Spacing Sweep)');
+    legend({'d = \lambda/2','d = 0.75\lambda'});
+
 end
 
-AF_mag = abs(ArrayFactor);
-AF_peak = max(AF_mag);
+% ==========================
+% ARRAY FACTOR MODE
+% ==========================
+if ~runTracking
 
+    theta_deg_input = 0;
+    theta_0 = deg2rad(theta_deg_input);
+    B = -K*d*sin(theta_0);
 
-% Beamwidth Metrics
-% --------------------------
+    [theta_deg, AF_plot, HPBW, FNBW, SLL_dB, idxL, idxR] = ...
+        computeArrayFactor(K, d, N, B, lambda, useNormalization);
 
-% First-Null Beamwidth (theoretical)
-FNBW = 2 * asind(lambda/(N*d));
+    figure; hold on; grid on;
 
-% Half-Power Beamwidth
-[~, Index_Max] = max(AF_mag);
+    if useDecibelPlot
+        plot(theta_deg, 20*log10(AF_plot),'LineWidth',1.5);
+        ylabel('dB');
+    else
+        plot(theta_deg, AF_plot,'LineWidth',1.5);
+        ylabel('Magnitude');
+    end
 
-Index_Left = Index_Max;
-while Index_Left > 1 && AF_mag(Index_Left) >= 0.707 * AF_peak
-    Index_Left = Index_Left - 1;
+    xlabel('Angle (deg)');
+    title('Array Factor');
+
+    xline(theta_deg(idxL),'--');
+    xline(theta_deg(idxR),'--');
+
 end
 
-Index_Right = Index_Max;
-while Index_Right < length(AF_mag) && AF_mag(Index_Right) >= 0.707 * AF_peak
-    Index_Right = Index_Right + 1;
+% ==========================
+% FUNCTION: TRACKING
+% ==========================
+function [theta_steered, tracking_error, RMS_error] = ...
+    runTrackingSimulation(theta_target, HPBW, SLL_linear, lag_steps, noise_std)
+
+    theta_steered = zeros(size(theta_target));
+    tracking_error = zeros(size(theta_target));
+    hist = zeros(size(theta_target));
+
+    for k = 1:length(theta_target)
+
+        theta_true = theta_target(k);
+
+        noise = noise_std*randn;
+        interference = SLL_linear*randn;
+
+        meas = theta_true + noise + interference;
+        hist(k) = meas;
+
+        if k > lag_steps
+            theta_steer = hist(k-lag_steps);
+        else
+            theta_steer = meas;
+        end
+
+        theta_steered(k) = theta_steer;
+
+        tracking_error(k) = (theta_steer - theta_true)/HPBW;
+
+    end
+
+    RMS_error = sqrt(mean(tracking_error.^2));
 end
 
-HPBW = rad2deg(theta(Index_Right) - theta(Index_Left));
+% ==========================
+% FUNCTION: ARRAY FACTOR
+% ==========================
+function [theta_deg, AF_plot, HPBW, FNBW, SLL_dB, idxL, idxR] = ...
+    computeArrayFactor(K,d,N,B,lambda,useNormalization)
 
+    theta = linspace(-pi/2, pi/2, 1000);
 
-% Sidelobe Level (SLL)
-% --------------------------
+    AF = zeros(size(theta));
+    for n=0:N-1
+        AF = AF + exp(1i*n*(K*d*sin(theta)+B));
+    end
 
-% Find first nulls to isolate sidelobes
-i_left = Index_Max;
-while i_left > 1 && AF_mag(i_left) >= AF_mag(i_left-1)
-    i_left = i_left - 1;
+    AF_mag = abs(AF);
+    peak = max(AF_mag);
+
+    [~, idxMax] = max(AF_mag);
+
+    idxL = idxMax;
+    while idxL>1 && AF_mag(idxL)>=0.707*peak
+        idxL=idxL-1;
+    end
+
+    idxR = idxMax;
+    while idxR<length(AF_mag) && AF_mag(idxR)>=0.707*peak
+        idxR=idxR+1;
+    end
+
+    HPBW = rad2deg(theta(idxR)-theta(idxL));
+    FNBW = 2*asind(lambda/(N*d));
+
+    side = AF_mag;
+    side(idxL:idxR)=0;
+    SLL = max(side)/peak;
+    SLL_dB = 20*log10(SLL);
+
+    if useNormalization
+        AF_plot = AF_mag/peak;
+    else
+        AF_plot = AF_mag;
+    end
+
+    theta_deg = rad2deg(theta);
 end
-
-i_right = Index_Max;
-while i_right < length(AF_mag) && AF_mag(i_right) >= AF_mag(i_right+1)
-    i_right = i_right + 1;
-end
-
-Left_Lobes  = AF_mag(1:i_left-1);
-Right_Lobes = AF_mag(i_right+1:end);
-
-Max_Sidelobe = max([Left_Lobes, Right_Lobes]);
-SLL = Max_Sidelobe / AF_peak;
-SLL_dB = 20*log10(SLL);
-
-
-% Prepare Data for Plotting
-% --------------------------
-if useNormalization
-    AF_plot = AF_mag / AF_peak;
-else
-    AF_plot = AF_mag;
-end
-
-theta_deg = rad2deg(theta);
-
-
-% Plot Radiation Pattern
-% --------------------------
-figure; hold on; grid on;
-
-if useDecibelPlot
-    plot(theta_deg, 20*log10(AF_plot), 'LineWidth', 1.5);
-    ylabel('Array Factor (dB)');
-    yline(-3,'--','-3 dB');
-else
-    plot(theta_deg, AF_plot, 'LineWidth', 1.5);
-    ylabel('Array Factor Magnitude');
-    yline(0.707 * (useNormalization + ~useNormalization*AF_peak), ...
-          '--','-3 dB Level');
-end
-
-xlabel('Angle (degrees)');
-title('Phased Array Radiation Pattern');
-
-% HPBW markers
-xline(rad2deg(theta(Index_Left)),'--');
-xline(rad2deg(theta(Index_Right)),'--');
-
-% Annotation
-txt = {
-    sprintf('N = %d', N)
-    sprintf('d = %.2f \\lambda', d/lambda)
-    sprintf('HPBW = %.2f°', HPBW)
-    sprintf('FNBW = %.2f°', FNBW)
-    sprintf('SLL = %.2f dB', SLL_dB)
-};
-
-text(0.02, 0.95, txt, ...
-    'Units','normalized', ...
-    'VerticalAlignment','top', ...
-    'BackgroundColor','w', ...
-    'EdgeColor','k');
-
-hold off;
-
-
-% Results Table
-% --------------------------
-ResultsTable = table( ...
-    N, d/lambda, HPBW, FNBW, SLL_dB, ...
-    'VariableNames', {'N','d_over_lambda','HPBW_deg','FNBW_deg','SLL_dB'});
-
-disp(ResultsTable);
-writetable(ResultsTable,'phased_array_metrics.csv');
